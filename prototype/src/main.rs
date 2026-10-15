@@ -1,4 +1,5 @@
 // PROTOTYPE (throwaway). See README.md.
+mod seekbar;
 mod video;
 
 #[cxx_qt::bridge]
