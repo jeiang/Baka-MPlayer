@@ -1,4 +1,6 @@
 // PROTOTYPE (throwaway). See README.md.
+mod video;
+
 #[cxx_qt::bridge]
 mod ffi {}
 
