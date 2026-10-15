@@ -1,0 +1,15 @@
+# PROTOTYPE (throwaway): answers issue #7. Not production code.
+[package]
+name = "proto-main-window"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cxx = "1"
+cxx-qt = "0.10"
+cxx-qt-lib = "0.10"
+libmpv2 = { version = "6", features = ["render"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
