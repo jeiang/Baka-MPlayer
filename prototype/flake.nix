@@ -25,6 +25,10 @@
               export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
               export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${qt.qtbase}/lib:${pkgs.mpv-unwrapped}/lib:${pkgs.libGL}/lib:${pkgs.mesa}/lib:$LD_LIBRARY_PATH"
             '' + lib.optionalString (!linux) ''
+              # nixpkgs builds Qt on macOS as frameworks (lib/QtCore.framework/Headers). cxx-qt-build only passes -I,
+              # so <QtCore/QObject> needs a framework search path for both compiler and linker.
+              export NIX_CFLAGS_COMPILE="-F${qt.qtbase}/lib -F${qt.qtsvg}/lib $NIX_CFLAGS_COMPILE"
+              export NIX_LDFLAGS="-F${qt.qtbase}/lib -F${qt.qtsvg}/lib $NIX_LDFLAGS"
               export DYLD_FALLBACK_LIBRARY_PATH="${qt.qtbase}/lib:${pkgs.mpv-unwrapped}/lib:$DYLD_FALLBACK_LIBRARY_PATH"
             '';
           };
