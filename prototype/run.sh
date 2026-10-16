@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 NIX="nix --extra-experimental-features nix-command --extra-experimental-features flakes develop path:. -c"
 $NIX cargo build
-if [ "${PROTO_HEADLESS-1}" = 1 ]; then
+# Xvfb exists only on Linux; macOS always uses the real display.
+if [ "${PROTO_HEADLESS-1}" = 1 ] && [ "$(uname)" = Linux ]; then
   PROTO_SHOT="${1:-$PWD/shots/run.png}" QT_QPA_PLATFORM=xcb $NIX xvfb-run -a -s "-screen 0 1280x720x24 +extension GLX" ./target/debug/proto-main-window
 else
   $NIX ./target/debug/proto-main-window
