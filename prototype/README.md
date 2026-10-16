@@ -25,6 +25,14 @@ Run: `./run.sh [shot.png]` (needs Nix; headless via Xvfb + Mesa llvmpipe). Env: 
 - The binary links but does not run until the final crate references `cxx-qt-lib` (otherwise `cxx_qt_init_crate_cxx_qt_lib` is undefined).
 - The render API needs the update callback to hop to the GUI thread (`QMetaObject::invokeMethod(..., Qt::QueuedConnection)`), and the render context must be freed with the GL context current (done in the widget destructor).
 
+## macOS (Apple Silicon, nixpkgs Qt 6.11.2) findings from the owner's runs
+
+- nixpkgs builds Qt on macOS as frameworks; cxx-qt-build passes only `-I`, so the shell must add `-F <qt>/lib` (flake does).
+- The root `.gitignore` rule `build*` hid `build.rs` until `09a7db5`; check new files with `git check-ignore -v`.
+- libmpv needs `LC_NUMERIC=C`. Qt adopts the system locale, so `mpv_create` returned NULL (`mpv init: Null`) on a non-C locale. `proto_run` now calls `setlocale(LC_NUMERIC, "C")`, as the original `src/main.cpp` does. Reproduced on Linux with `LC_ALL=C.utf8`.
+- Qt 6 deprecation warnings in the original widgets (all still compile): `QMouseEvent::x()`, `globalPos()`, `globalX()` in `customslider.cpp`, `indexbutton.cpp`, `seekbar.cpp`. Port to `position()` / `globalPosition()`.
+- Fidelity note: the QSS names `Noto Sans`/`FreeSans`; Qt warns the family is missing on this Mac. Fonts must be bundled or fidelity screenshots will differ per OS.
+
 ## Not verified
 
 - Windows and macOS: not built or run. Expected blockers from the research: ANGLE or WGL interop for hardware decode on Windows, CGL (deprecated) on macOS, `QtWinExtras` replacement.

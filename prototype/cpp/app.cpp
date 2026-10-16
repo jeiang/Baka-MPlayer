@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QPixmap>
 #include <QTimer>
+#include <clocale>
 #include <cstdlib>
 #include <QVBoxLayout>
 #include "mpvglwidget.h"
@@ -49,6 +50,8 @@ public:
 
 extern "C" int proto_run(int argc, char **argv) {
     QApplication app(argc, argv);
+    // libmpv refuses to start unless LC_NUMERIC is "C"; Qt adopts the system locale on startup.
+    std::setlocale(LC_NUMERIC, "C");
     ProtoWindow w;
     w.resize(1000, 640);
     w.show();
