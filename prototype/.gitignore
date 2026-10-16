@@ -1,1 +1,3 @@
 target/
+# the repo root .gitignore has "build*", which would hide build.rs
+!build.rs
