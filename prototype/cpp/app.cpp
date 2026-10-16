@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QMainWindow>
 #include <QPixmap>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <clocale>
 #include <cstdlib>
@@ -43,6 +44,22 @@ public:
         }
         seek->setEnabled(true);
         seek->setValue(seek->maximum() / 3);
+
+        // The original hides the debug output pane (output box + command line) unless debug mode is on.
+        const bool debug = std::getenv("PROTO_DEBUG") != nullptr;
+        ui.verticalWidget->setVisible(debug);
+        ui.actionShow_D_ebug_Output->setChecked(debug);
+
+        // Stand-in for MpvHandler's `playback-time` observer: follow playback.
+        auto *tick = new QTimer(this);
+        connect(tick, &QTimer::timeout, this, [seek] {
+            const int pm = proto_mpv_progress();
+            if (pm >= 0 && !seek->isSliderDown()) {
+                QSignalBlocker b(seek);
+                seek->setValue(int(double(pm) / 1000 * seek->maximum()));
+            }
+        });
+        tick->start(250);
     }
     Ui::MainWindow ui;
 };
@@ -56,7 +73,7 @@ extern "C" int proto_run(int argc, char **argv) {
     w.resize(1000, 640);
     w.show();
     if (const char *shot = std::getenv("PROTO_SHOT")) {
-        QTimer::singleShot(3000, [&] { w.grab().save(shot); app.quit(); });
+        QTimer::singleShot(std::getenv("PROTO_SHOT_MS") ? std::atoi(std::getenv("PROTO_SHOT_MS")) : 3000, [&] { w.grab().save(shot); app.quit(); });
     }
     return app.exec();
 }

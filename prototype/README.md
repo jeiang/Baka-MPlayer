@@ -2,7 +2,7 @@
 
 Answers GitHub issue #7 ("Prototype: main window with video through the render API"). Not production code. Do not merge.
 
-Run: `./run.sh [shot.png]` (needs Nix; headless via Xvfb + Mesa llvmpipe). Env: `PROTO_RUST_SEEKBAR=1` swaps the C++ SeekBar for the Rust one; `PROTO_VIDEO=<file|url>` plays a real file (default is mpv's lavfi `testsrc`). `PROTO_HEADLESS=` (empty) runs on the real display.
+Run: `./run.sh [shot.png]` (needs Nix; headless via Xvfb + Mesa llvmpipe on Linux, a real window on macOS). Env: `PROTO_RUST_SEEKBAR=1` swaps the C++ SeekBar for the Rust one; `PROTO_VIDEO=<file|url>` plays a real file (default is mpv's lavfi `testsrc`); `PROTO_DEBUG=1` shows the debug output pane (hidden by default, as in the original); `PROTO_MPV_LOG=1` enables mpv's verbose log; `PROTO_SHOT_MS=<ms>` sets the screenshot delay; `PROTO_HEADLESS=` (empty) runs on the real display.
 
 ## What it builds (Qt 6.11.2, mpv 0.41 / libmpv API 2.5, cxx-qt 0.10.0, libmpv2 6.0.0, all from nixpkgs/crates.io)
 
@@ -32,6 +32,16 @@ Run: `./run.sh [shot.png]` (needs Nix; headless via Xvfb + Mesa llvmpipe). Env: 
 - libmpv needs `LC_NUMERIC=C`. Qt adopts the system locale, so `mpv_create` returned NULL (`mpv init: Null`) on a non-C locale. `proto_run` now calls `setlocale(LC_NUMERIC, "C")`, as the original `src/main.cpp` does. Reproduced on Linux with `LC_ALL=C.utf8`.
 - Qt 6 deprecation warnings in the original widgets (all still compile): `QMouseEvent::x()`, `globalPos()`, `globalX()` in `customslider.cpp`, `indexbutton.cpp`, `seekbar.cpp`. Port to `position()` / `globalPosition()`.
 - Fidelity note: the QSS names `Noto Sans`/`FreeSans`; Qt warns the family is missing on this Mac. Fonts must be bundled or fidelity screenshots will differ per OS.
+
+## Owner's macOS check (Apple Silicon): passes
+
+- A real media file plays in the window through the render API. The Rust `SeekBar` (`PROTO_RUST_SEEKBAR=1`) shows the 25/50/75% ticks and the filled portion correctly.
+- The first versions showed a black box under the video: that is the original's debug output pane (`verticalWidget`), which `mainwindow.cpp` hides unless debug mode is on. The prototype now hides it too.
+- The C++ seek bar stayed at one third because nothing fed it playback position; a 250 ms timer now polls mpv `percent-pos` and moves the slider (the real app observes `playback-time`).
+
+## Linux headless caveat
+
+Under Xvfb with Mesa llvmpipe, `QWidget::grab()` shows the video area black for yuv420p content (a real H.264 file, or lavfi with `format=yuv420p`) while rgb content (lavfi `testsrc`) renders, even though mpv reports no error and the seek bar advances. The same file renders correctly on the owner's Mac. Treat real-file screenshots as needing a real GPU and display; whether this is llvmpipe-only is unchecked on a real Linux GPU.
 
 ## Not verified
 

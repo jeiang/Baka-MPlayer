@@ -34,6 +34,10 @@ pub extern "C" fn proto_mpv_init(widget: *mut c_void) {
             i.set_property("hwdec", "no")?;
             i.set_property("ao", "null")?;
             i.set_property("keep-open", "yes")?;
+            if std::env::var("PROTO_MPV_LOG").is_ok() {
+                i.set_property("terminal", "yes")?;
+                i.set_property("msg-level", "all=v")?;
+            }
             Ok(())
         })
         .expect("mpv init"),
@@ -55,7 +59,18 @@ pub extern "C" fn proto_mpv_init(widget: *mut c_void) {
 pub extern "C" fn proto_mpv_paint(fbo: i32, w: i32, h: i32) {
     if let Some(v) = VIDEO.lock().unwrap().as_ref() {
         let _ = v.render.update();
-        v.render.render::<Gl>(fbo, w, h, true).ok();
+        if let Err(e) = v.render.render::<Gl>(fbo, w, h, true) {
+            eprintln!("proto: render error: {e:?}");
+        }
+    }
+}
+
+/// Playback position as per mille of the file, or -1 when nothing is playing. The real app observes `playback-time`.
+#[no_mangle]
+pub extern "C" fn proto_mpv_progress() -> i32 {
+    match VIDEO.lock().unwrap().as_ref() {
+        Some(v) => v.mpv.get_property::<f64>("percent-pos").map(|p| (p * 10.0) as i32).unwrap_or(-1),
+        None => -1,
     }
 }
 

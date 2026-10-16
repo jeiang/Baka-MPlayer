@@ -7,6 +7,7 @@ extern "C" {
 void proto_mpv_init(void *widget);       // implemented in Rust: create Mpv + render context
 void proto_mpv_paint(int fbo, int w, int h); // implemented in Rust
 void proto_mpv_shutdown();               // implemented in Rust
+int proto_mpv_progress();                // implemented in Rust: per mille, or -1
 }
 
 class MpvGLWidget : public QOpenGLWidget {
