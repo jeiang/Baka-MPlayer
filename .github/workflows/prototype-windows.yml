@@ -1,0 +1,158 @@
+# PROTOTYPE (throwaway): answers the Windows part of issue #7. Not the production CI (that is decided in #12 and #13).
+# Questions it answers without a human: does the Rust + cxx-qt + libmpv prototype build and link with MSVC (including
+# generating an MSVC import library from mpv's MinGW-built DLL), and does it start and render under software OpenGL?
+name: prototype-windows
+
+on:
+  push:
+    branches: [prototype/main-window-video]
+    paths: ['prototype/**', '.github/workflows/prototype-windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prototype-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_VERSION: 6.8.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Locate Qt tools
+        run: |
+          $libexec = (qmake -query QT_HOST_LIBEXECS).Trim()
+          $uic = Join-Path $libexec 'uic.exe'
+          if (-not (Test-Path $uic)) { $uic = Join-Path (qmake -query QT_HOST_BINS).Trim() 'uic.exe' }
+          if (-not (Test-Path $uic)) { throw "uic.exe not found (libexec: $libexec)" }
+          "PROTO_UIC=$uic" >> $env:GITHUB_ENV
+          qmake -query | Out-String | Write-Host
+
+      # Upstream publishes libmpv only as development builds. For the prototype we take the latest community
+      # build of mpv-winbuild-cmake. The production plan (#12) pins a build by hash and mirrors it.
+      - name: Fetch libmpv dev build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force mpvdev | Out-Null
+          gh release download --repo shinchiro/mpv-winbuild-cmake --pattern 'mpv-dev-x86_64-2*' --dir mpvdev --clobber
+          $archives = Get-ChildItem mpvdev -Filter '*.7z'
+          if ($archives.Count -ne 1) { gh release view --repo shinchiro/mpv-winbuild-cmake --json assets --jq '.assets[].name'; throw "expected exactly one mpv-dev archive, got $($archives.Count)" }
+          7z x $archives[0].FullName "-ompvdev\x" -y | Out-Null
+          Get-ChildItem mpvdev\x -Recurse | Select-Object -First 40 FullName | Out-String | Write-Host
+          "MPV_ARCHIVE=$($archives[0].Name)" >> $env:GITHUB_ENV
+
+      # The DLL is built with MinGW, so the archive carries a GNU import library (libmpv.dll.a). rustc's MSVC target
+      # needs a .lib, so we generate one from the DLL's export table.
+      - name: Generate MSVC import library for libmpv
+        run: |
+          $dll = Get-ChildItem mpvdev\x -Recurse -Filter 'libmpv-2.dll' | Select-Object -First 1
+          if (-not $dll) { throw 'libmpv-2.dll not found in the dev archive' }
+          $out = Join-Path $PWD 'mpvlib'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $def = Get-ChildItem mpvdev\x -Recurse -Filter 'mpv.def' | Select-Object -First 1
+          if ($def) {
+            Copy-Item $def.FullName "$out\mpv.def"
+          } else {
+            $names = dumpbin /exports $dll.FullName | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $Matches[1] } }
+            if (-not $names) { throw 'dumpbin returned no exports' }
+            "LIBRARY libmpv-2.dll`nEXPORTS`n" + ($names -join "`n") | Set-Content -Encoding ascii "$out\mpv.def"
+          }
+          lib /nologo /machine:x64 "/def:$out\mpv.def" "/out:$out\mpv.lib"
+          if ($LASTEXITCODE -ne 0) { throw 'lib.exe failed' }
+          Copy-Item $dll.FullName "$out\libmpv-2.dll"
+          Get-ChildItem $out | Out-String | Write-Host
+          "MPV_LIB_DIR=$out" >> $env:GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build prototype (release)
+        working-directory: prototype
+        env:
+          RUSTFLAGS: -L native=${{ env.MPV_LIB_DIR }}
+        run: cargo build --release --locked
+
+      - name: Assemble portable folder
+        run: |
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item prototype\target\release\proto-main-window.exe $dist
+          Copy-Item "$env:MPV_LIB_DIR\libmpv-2.dll" $dist
+          windeployqt --release --no-translations --no-system-d3d-compiler "$dist\proto-main-window.exe"
+          # The exe does not link QtSvg, so windeployqt skips the SVG icon plugins the .ui icons need.
+          $qtroot = (qmake -query QT_INSTALL_PREFIX).Trim()
+          foreach ($f in @('bin\Qt6Svg.dll', 'bin\opengl32sw.dll')) {
+            if (Test-Path "$qtroot\$f") { Copy-Item "$qtroot\$f" $dist } else { Write-Warning "missing $f" }
+          }
+          foreach ($p in @('imageformats\qsvg.dll', 'iconengines\qsvgicon.dll')) {
+            $dst = Join-Path $dist (Split-Path $p)
+            New-Item -ItemType Directory -Force $dst | Out-Null
+            if (Test-Path "$qtroot\plugins\$p") { Copy-Item "$qtroot\plugins\$p" $dst } else { Write-Warning "missing plugin $p" }
+          }
+          Get-ChildItem $dist -Recurse | Select-Object -ExpandProperty FullName | Out-File build-contents.txt
+          dumpbin /dependents "$dist\proto-main-window.exe" | Out-File dependents.txt
+
+      # Software OpenGL (opengl32sw) because the runner has no GPU. Video through the render API is therefore checked
+      # for "starts and runs", not for performance or hardware decode. The video area is not asserted on (see #13).
+      - name: Smoke test
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $env:QT_OPENGL = 'software'
+          $env:PROTO_SHOT = Join-Path $PWD 'smoke\main-window.png'
+          $env:PROTO_SHOT_MS = '6000'
+          $env:PROTO_MPV_LOG = '1'
+          $p = Start-Process -FilePath "$PWD\dist\proto-main-window.exe" -PassThru -NoNewWindow `
+                 -RedirectStandardOutput smoke\stdout.txt -RedirectStandardError smoke\stderr.txt
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Error 'app did not exit within 120 s'; exit 1 }
+          Write-Host "exit code: $($p.ExitCode)"
+          Get-Content smoke\stderr.txt -Tail 40 -ErrorAction SilentlyContinue | Write-Host
+          if ($p.ExitCode -ne 0) { Write-Error "app exited with $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path $env:PROTO_SHOT)) { Write-Error 'no screenshot written'; exit 1 }
+          $size = (Get-Item $env:PROTO_SHOT).Length
+          Write-Host "screenshot bytes: $size"
+          if ($size -lt 8000) { Write-Error 'screenshot is suspiciously small (blank window?)'; exit 1 }
+          if (Select-String -Path smoke\stdout.txt, smoke\stderr.txt -Pattern 'proto: render error' -Quiet) { Write-Error 'mpv render error logged'; exit 1 }
+
+      - name: Upload smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proto-windows-smoke
+          path: |
+            smoke/
+            build-contents.txt
+            dependents.txt
+          if-no-files-found: warn
+
+      - name: Zip portable folder
+        if: always()
+        run: if (Test-Path dist) { Compress-Archive -Path dist\* -DestinationPath proto-windows-portable.zip }
+
+      - name: Upload portable zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proto-windows-portable
+          path: proto-windows-portable.zip
+          if-no-files-found: ignore
